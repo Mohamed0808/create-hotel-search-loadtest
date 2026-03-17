@@ -1,0 +1,19 @@
+{
+  "name": "hotel-search-loadtest",
+  "version": "1.0.0",
+  "description": "Load testing tool for hotel search via SignalR WebSocket with multi-provider support",
+  "main": "loadtest.js",
+  "scripts": {
+    "start": "node loadtest.js",
+    "test:all": "node loadtest.js --providers all --users 5",
+    "test:tbo": "node loadtest.js --providers TBO --users 3",
+    "test:webbeds": "node loadtest.js --providers Webbeds --users 3",
+    "test:ramp": "node loadtest.js --providers all --ramp-end 20 --ramp-duration 60"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.0",
+    "axios": "^1.7.0",
+    "commander": "^12.1.0",
+    "ws": "^8.18.0"
+  }
+}
