@@ -5,8 +5,12 @@ module.exports = {
   baseUrl: 'https://alkhameescore.techeffic.com',
   hubPath: '/hubs/mobilehotelsearch',
 
+  // cacheKey passed as query param to the hub URL
+  // TODO: Put the actual cacheKey value from Postman
+  cacheKey: 'YOUR_CACHE_KEY_HERE',
+
   get hubUrl() {
-    return `${this.baseUrl}${this.hubPath}`;
+    return `${this.baseUrl}${this.hubPath}?cacheKey=${this.cacheKey}`;
   },
 
   // =================================================================
@@ -21,10 +25,11 @@ module.exports = {
   //  SIGNALR  –  Hub method names
   // =================================================================
   signalr: {
-    // Method we INVOKE on the hub to start a search
+    // Method YOU invoke on the hub to start a search
+    // TODO: Check Postman "Message" tab for the correct method name
     invokeMethod: 'Search',
 
-    // Method the server calls to push results per provider
+    // Method the server calls back to push results per provider
     receiveMethod: 'ReceiveSearchResults',
 
     // Method the server calls when the full search is done
@@ -40,7 +45,7 @@ module.exports = {
   providers: ['TBO', 'Webbeds', 'hotelbeds', 'ratehawk', 'magic', 'smile'],
 
   // =================================================================
-  //  DEFAULT SEARCH PAYLOAD  (sent to the hub invoke method)
+  //  SEARCH PAYLOAD  (sent via SignalR invoke)
   // =================================================================
   searchPayload: {
     destination: 'Dubai',

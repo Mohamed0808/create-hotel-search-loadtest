@@ -13,7 +13,7 @@ if (typeof globalThis.WebSocket === 'undefined') {
 // ──────────────────────────────────────────────────────────────
 program
   .name('hotel-loadtest')
-  .description('Load-test hotel search via SignalR + HTTP')
+  .description('Load-test hotel search via SignalR WebSocket')
   .option('-p, --providers <list>', 'Comma-separated providers or "all"', 'all')
   .option('-u, --users <n>', 'Concurrent users (flat mode)', parseInt)
   .option('--ramp-start <n>', 'Ramp-up: starting users', parseInt)
@@ -338,7 +338,7 @@ async function main() {
   console.log('  HOTEL SEARCH LOAD TEST');
   console.log(banner);
   console.log(`  Hub URL ........ ${config.hubUrl}`);
-  console.log(`  Hub Method ..... ${config.signalr.invokeMethod}`);
+  console.log(`  Invoke method .. ${config.signalr.invokeMethod}`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
   console.log(`  Timeout ........ ${opts.timeout || config.searchTimeoutMs} ms`);
 
