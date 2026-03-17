@@ -13,7 +13,7 @@ if (typeof globalThis.WebSocket === 'undefined') {
 // ──────────────────────────────────────────────────────────────
 program
   .name('hotel-loadtest')
-  .description('Load-test hotel search via HTTP + SignalR WebSocket')
+  .description('Load-test hotel search via SignalR WebSocket')
   .option('-p, --providers <list>', 'Comma-separated providers or "all"', 'all')
   .option('-u, --users <n>', 'Concurrent users (flat mode)', parseInt)
   .option('--ramp-start <n>', 'Ramp-up: starting users', parseInt)
@@ -42,9 +42,7 @@ class MetricsCollector {
     });
   }
 
-  addSession(s) {
-    this.sessions.push(s);
-  }
+  addSession(s) { this.sessions.push(s); }
 
   addProviderResult(provider, ms, hotels) {
     const s = this.providerStats[provider];
@@ -79,8 +77,8 @@ class MetricsCollector {
     const errors = this.sessions.filter(s => s.status === 'error').length;
     const elapsed = this.sessions.map(s => s.elapsed);
 
-    const line = '─'.repeat(78);
-    const dblLine = '═'.repeat(78);
+    const line = '-'.repeat(78);
+    const dblLine = '='.repeat(78);
 
     console.log(`\n${dblLine}`);
     console.log('  LOAD TEST REPORT');
@@ -97,31 +95,38 @@ class MetricsCollector {
     }
 
     console.log(`\n${line}`);
-    console.log('  PER-PROVIDER BREAKDOWN');
+    console.log('  TIMING BREAKDOWN');
     console.log(line);
     console.log(
-      pad('Provider', 14) +
-      pad('Avg ms', 10) +
-      pad('Min', 10) +
-      pad('Max', 10) +
-      pad('P95', 10) +
-      pad('Hotels', 10) +
-      pad('Errors', 8)
+      pad('Metric', 30) +
+      pad('Avg ms', 12) +
+      pad('Min', 12) +
+      pad('Max', 12) +
+      pad('P95', 12)
     );
     console.log(line);
 
-    for (const [name, s] of Object.entries(this.providerStats)) {
-      if (!s.times.length && !s.errors) continue;
+    const connTimes = this.sessions.map(s => s.connectTime).filter(Boolean);
+    const registerTimes = this.sessions.map(s => s.registerTime).filter(Boolean);
+    const firstPageTimes = this.sessions.map(s => s.firstPageTime).filter(Boolean);
+    const finishTimes = this.sessions.map(s => s.finishTime).filter(Boolean);
+
+    for (const [label, arr] of [
+      ['Connection', connTimes],
+      ['RegisterConnection', registerTimes],
+      ['First page results', firstPageTimes],
+      ['Search finished', finishTimes],
+    ]) {
+      if (!arr.length) continue;
       console.log(
-        pad(name, 14) +
-        pad(this._avg(s.times), 10) +
-        pad(this._min(s.times), 10) +
-        pad(this._max(s.times), 10) +
-        pad(this._percentile(s.times, 95), 10) +
-        pad(s.hotels, 10) +
-        pad(s.errors, 8)
+        pad(label, 30) +
+        pad(this._avg(arr), 12) +
+        pad(this._min(arr), 12) +
+        pad(this._max(arr), 12) +
+        pad(this._percentile(arr, 95), 12)
       );
     }
+
     console.log(line);
 
     if (errors) {
@@ -149,10 +154,11 @@ function pad(v, w) {
 async function runSearch(sessionId, providers, metrics) {
   const t0 = Date.now();
   let connection = null;
+  const cacheKey = config.generateCacheKey();
   const searchKey = config.generateKey();
 
   try {
-    // 1. Build SignalR connection
+    // 1. Connect to SignalR hub (NO cacheKey in URL)
     connection = new signalR.HubConnectionBuilder()
       .withUrl(config.hubUrl, {
         skipNegotiation: false,
@@ -161,87 +167,96 @@ async function runSearch(sessionId, providers, metrics) {
       .configureLogging(signalR.LogLevel.None)
       .build();
 
-    const pending = new Set(providers);
-    const providerResults = {};
+    const sessionResult = {
+      id: sessionId,
+      status: 'pending',
+      connectTime: 0,
+      registerTime: 0,
+      firstPageTime: 0,
+      finishTime: 0,
+      totalHotels: 0,
+      pageCount: 0,
+      elapsed: 0,
+    };
 
     const result = await new Promise(async (resolve) => {
       const timeoutMs = opts.timeout || config.searchTimeoutMs;
       const timer = setTimeout(() => {
-        resolve({
-          id: sessionId,
-          status: 'timeout',
-          providers: providerResults,
-          elapsed: Date.now() - t0,
-        });
+        sessionResult.status = 'timeout';
+        sessionResult.elapsed = Date.now() - t0;
+        resolve(sessionResult);
       }, timeoutMs);
 
-      // Listen for per-provider results
-      connection.on(config.signalr.receiveMethod, (data) => {
-        const provider =
-          data?.provider || data?.ProviderName || data?.providerName || 'unknown';
-        const hotels =
-          data?.hotels?.length ?? data?.Hotels?.length ?? data?.hotelCount ?? 0;
+      // Listen: first page of results
+      connection.on(config.signalr.receiveFirstPage, (data) => {
         const ms = Date.now() - t0;
-
-        providerResults[provider] = { ms, hotels, status: 'ok' };
-        metrics.addProviderResult(provider, ms, hotels);
-        pending.delete(provider);
-
-        log(sessionId, `${provider}: ${hotels} hotels in ${ms} ms`);
-
-        if (pending.size === 0) {
-          clearTimeout(timer);
-          resolve({
-            id: sessionId,
-            status: 'complete',
-            providers: providerResults,
-            elapsed: Date.now() - t0,
-          });
-        }
+        sessionResult.firstPageTime = ms;
+        const hotels = data?.hotelResults?.length ?? 0;
+        sessionResult.totalHotels = hotels;
+        log(sessionId, `First page: ${hotels} hotels in ${ms} ms`);
       });
 
-      connection.on(config.signalr.searchCompleteMethod, () => {
+      // Listen: count updates (providers responding incrementally)
+      connection.on(config.signalr.countUpdated, (data) => {
+        const count = data?.pageCount ?? 0;
+        sessionResult.pageCount = count;
+      });
+
+      // Listen: search finished
+      connection.on(config.signalr.searchFinished, (data) => {
         clearTimeout(timer);
-        resolve({
-          id: sessionId,
-          status: 'complete',
-          providers: providerResults,
-          elapsed: Date.now() - t0,
-        });
+        const ms = Date.now() - t0;
+        sessionResult.finishTime = ms;
+        sessionResult.pageCount = data?.pageCount ?? sessionResult.pageCount;
+        sessionResult.status = 'complete';
+        sessionResult.elapsed = ms;
+        log(sessionId, `Search finished: ${sessionResult.pageCount} total pages in ${ms} ms`);
+        resolve(sessionResult);
       });
 
-      connection.on(config.signalr.errorMethod, (err) => {
+      // Listen: status messages
+      connection.on(config.signalr.receiveMessage, (msg) => {
+        log(sessionId, `Server: ${msg}`);
+      });
+
+      // Listen: errors
+      connection.on('error', (err) => {
         const msg = typeof err === 'string' ? err : JSON.stringify(err);
-        log(sessionId, `Server error: ${msg}`);
+        log(sessionId, `Hub error: ${msg}`);
       });
 
-      // 2. Start SignalR connection
+      // 2. Start connection
       await connection.start();
-      const connMs = Date.now() - t0;
-      log(sessionId, `Connected in ${connMs} ms  (connId: ${connection.connectionId})`);
+      sessionResult.connectTime = Date.now() - t0;
+      log(sessionId, `Connected in ${sessionResult.connectTime} ms`);
 
-      // 3. Fire HTTP POST to /api/Hotel/HotelResultDetails/:cacheKey/:key
-      const url = `${config.searchEndpoint}/${searchKey}`;
-      const body = {
-        ...config.searchPayload,
-        key: searchKey,
-      };
+      // 3. Register connection with cacheKey
+      try {
+        await connection.invoke(config.signalr.registerMethod, cacheKey);
+        sessionResult.registerTime = Date.now() - t0;
+        log(sessionId, `Registered with cacheKey: ${cacheKey.slice(0, 8)}...`);
+      } catch (invokeErr) {
+        clearTimeout(timer);
+        sessionResult.status = 'error';
+        sessionResult.error = `RegisterConnection failed: ${invokeErr.message}`;
+        sessionResult.elapsed = Date.now() - t0;
+        resolve(sessionResult);
+        return;
+      }
+
+      // 4. POST to trigger the search (with search parameters)
+      const url = config.searchUrl(cacheKey, searchKey);
+      const body = { ...config.searchPayload, key: searchKey };
 
       try {
         await axios.post(url, body, {
           headers: { 'Content-Type': 'application/json' },
           timeout: config.connectionTimeoutMs,
         });
-        log(sessionId, `Search POST sent  (key: ${searchKey})`);
+        log(sessionId, `Search POST sent`);
       } catch (httpErr) {
-        clearTimeout(timer);
-        resolve({
-          id: sessionId,
-          status: 'error',
-          error: `HTTP ${httpErr.response?.status || ''}: ${httpErr.message}`,
-          providers: providerResults,
-          elapsed: Date.now() - t0,
-        });
+        const status = httpErr.response?.status;
+        log(sessionId, `Search POST returned ${status || 'error'} (may still get results via hub)`);
       }
     });
 
@@ -252,7 +267,6 @@ async function runSearch(sessionId, providers, metrics) {
       id: sessionId,
       status: 'error',
       error: err.message,
-      providers: {},
       elapsed: Date.now() - t0,
     };
     metrics.addSession(result);
@@ -335,7 +349,7 @@ async function main() {
   console.log('  HOTEL SEARCH LOAD TEST');
   console.log(banner);
   console.log(`  Hub URL ........ ${config.hubUrl}`);
-  console.log(`  Search API ..... ${config.searchEndpoint}/:key`);
+  console.log(`  Search API ..... /api/Hotel/HotelResultDetails/:cacheKey/:key`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
   console.log(`  Timeout ........ ${opts.timeout || config.searchTimeoutMs} ms`);
 
