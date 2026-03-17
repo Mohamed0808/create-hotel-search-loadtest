@@ -1,9 +1,9 @@
 const signalR = require('@microsoft/signalr');
+const axios = require('axios');
 const { program } = require('commander');
 const WebSocket = require('ws');
 const config = require('./config');
 
-// Node.js needs a global WebSocket for the SignalR client
 if (typeof globalThis.WebSocket === 'undefined') {
   globalThis.WebSocket = WebSocket;
 }
@@ -13,7 +13,7 @@ if (typeof globalThis.WebSocket === 'undefined') {
 // ──────────────────────────────────────────────────────────────
 program
   .name('hotel-loadtest')
-  .description('Load-test hotel search via SignalR WebSocket')
+  .description('Load-test hotel search via HTTP + SignalR WebSocket')
   .option('-p, --providers <list>', 'Comma-separated providers or "all"', 'all')
   .option('-u, --users <n>', 'Concurrent users (flat mode)', parseInt)
   .option('--ramp-start <n>', 'Ramp-up: starting users', parseInt)
@@ -58,7 +58,6 @@ class MetricsCollector {
     if (s) s.errors++;
   }
 
-  // ── Statistics helpers ───────────────────────────────────
   _percentile(arr, p) {
     if (!arr.length) return 0;
     const sorted = [...arr].sort((a, b) => a - b);
@@ -73,7 +72,6 @@ class MetricsCollector {
   _min(arr) { return arr.length ? Math.min(...arr) : 0; }
   _max(arr) { return arr.length ? Math.max(...arr) : 0; }
 
-  // ── Report ───────────────────────────────────────────────
   report() {
     const total = this.sessions.length;
     const ok = this.sessions.filter(s => s.status === 'complete').length;
@@ -151,15 +149,12 @@ function pad(v, w) {
 async function runSearch(sessionId, providers, metrics) {
   const t0 = Date.now();
   let connection = null;
+  const searchKey = config.generateKey();
 
   try {
     // 1. Build SignalR connection
-    const authHeaders = {};
-    authHeaders[config.auth.headerName] = config.auth.apiKey;
-
     connection = new signalR.HubConnectionBuilder()
       .withUrl(config.hubUrl, {
-        headers: authHeaders,
         skipNegotiation: false,
         transport: signalR.HttpTransportType.WebSockets,
       })
@@ -205,7 +200,6 @@ async function runSearch(sessionId, providers, metrics) {
         }
       });
 
-      // Listen for "all done" signal from server
       connection.on(config.signalr.searchCompleteMethod, () => {
         clearTimeout(timer);
         resolve({
@@ -216,32 +210,35 @@ async function runSearch(sessionId, providers, metrics) {
         });
       });
 
-      // Listen for errors from the server
       connection.on(config.signalr.errorMethod, (err) => {
         const msg = typeof err === 'string' ? err : JSON.stringify(err);
         log(sessionId, `Server error: ${msg}`);
       });
 
-      // 2. Start connection
+      // 2. Start SignalR connection
       await connection.start();
       const connMs = Date.now() - t0;
       log(sessionId, `Connected in ${connMs} ms  (connId: ${connection.connectionId})`);
 
-      // 3. Invoke search on the SignalR hub
-      const payload = {
+      // 3. Fire HTTP POST to /api/Hotel/HotelResultDetails/:cacheKey/:key
+      const url = `${config.searchEndpoint}/${searchKey}`;
+      const body = {
         ...config.searchPayload,
-        providers,
+        key: searchKey,
       };
 
       try {
-        await connection.invoke(config.signalr.invokeMethod, payload);
-        log(sessionId, 'Search invoked on hub');
-      } catch (invokeErr) {
+        await axios.post(url, body, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: config.connectionTimeoutMs,
+        });
+        log(sessionId, `Search POST sent  (key: ${searchKey})`);
+      } catch (httpErr) {
         clearTimeout(timer);
         resolve({
           id: sessionId,
           status: 'error',
-          error: `Invoke failed: ${invokeErr.message}`,
+          error: `HTTP ${httpErr.response?.status || ''}: ${httpErr.message}`,
           providers: providerResults,
           elapsed: Date.now() - t0,
         });
@@ -300,13 +297,13 @@ async function rampUpMode(providers, metrics) {
   let sessionId = 0;
 
   console.log(`\n  Mode ........... Ramp-up`);
-  console.log(`  Users .......... ${start} → ${end}`);
+  console.log(`  Users .......... ${start} -> ${end}`);
   console.log(`  Duration ....... ${duration}s  (step every ${step}s)`);
   console.log(`  Steps .......... ${steps + 1}\n`);
 
   for (let s = 0; s <= steps; s++) {
     const users = Math.min(Math.round(start + increment * s), end);
-    console.log(`\n  ── Step ${s + 1}/${steps + 1}: ${users} concurrent users ──`);
+    console.log(`\n  -- Step ${s + 1}/${steps + 1}: ${users} concurrent users --`);
 
     const batch = [];
     for (let i = 0; i < users; i++) {
@@ -333,12 +330,12 @@ async function main() {
   const providers = resolveProviders();
   const isRamp = opts.rampEnd != null;
 
-  const banner = '═'.repeat(78);
+  const banner = '='.repeat(78);
   console.log(`\n${banner}`);
   console.log('  HOTEL SEARCH LOAD TEST');
   console.log(banner);
   console.log(`  Hub URL ........ ${config.hubUrl}`);
-  console.log(`  Invoke method .. ${config.signalr.invokeMethod}`);
+  console.log(`  Search API ..... ${config.searchEndpoint}/:key`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
   console.log(`  Timeout ........ ${opts.timeout || config.searchTimeoutMs} ms`);
 
