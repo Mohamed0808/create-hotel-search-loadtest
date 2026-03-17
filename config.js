@@ -9,10 +9,6 @@ module.exports = {
     return `${this.baseUrl}${this.hubPath}`;
   },
 
-  // HTTP endpoint that triggers the hotel search
-  // TODO: Replace with actual search endpoint path
-  searchEndpoint: 'https://alkhameescore.techeffic.com/api/hotel/search',
-
   // =================================================================
   //  AUTHENTICATION  (API Key)
   // =================================================================
@@ -22,16 +18,19 @@ module.exports = {
   },
 
   // =================================================================
-  //  SIGNALR  –  Hub method names the server uses
+  //  SIGNALR  –  Hub method names
   // =================================================================
   signalr: {
-    // Method the server invokes to push results per provider
+    // Method we INVOKE on the hub to start a search
+    invokeMethod: 'Search',
+
+    // Method the server calls to push results per provider
     receiveMethod: 'ReceiveSearchResults',
 
-    // Method the server invokes when the full search is done
+    // Method the server calls when the full search is done
     searchCompleteMethod: 'SearchComplete',
 
-    // Method the server invokes on error
+    // Method the server calls on error
     errorMethod: 'SearchError',
   },
 
@@ -41,7 +40,7 @@ module.exports = {
   providers: ['TBO', 'Webbeds', 'hotelbeds', 'ratehawk', 'magic', 'smile'],
 
   // =================================================================
-  //  DEFAULT SEARCH PAYLOAD  (sent via HTTP POST)
+  //  DEFAULT SEARCH PAYLOAD  (sent to the hub invoke method)
   // =================================================================
   searchPayload: {
     destination: 'Dubai',

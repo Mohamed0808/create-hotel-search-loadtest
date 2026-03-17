@@ -1,5 +1,4 @@
 const signalR = require('@microsoft/signalr');
-const axios = require('axios');
 const { program } = require('commander');
 const WebSocket = require('ws');
 const config = require('./config');
@@ -228,28 +227,21 @@ async function runSearch(sessionId, providers, metrics) {
       const connMs = Date.now() - t0;
       log(sessionId, `Connected in ${connMs} ms  (connId: ${connection.connectionId})`);
 
-      // 3. Fire HTTP search request
+      // 3. Invoke search on the SignalR hub
       const payload = {
         ...config.searchPayload,
         providers,
-        connectionId: connection.connectionId,
       };
 
       try {
-        await axios.post(config.searchEndpoint, payload, {
-          headers: {
-            'Content-Type': 'application/json',
-            ...authHeaders,
-          },
-          timeout: config.connectionTimeoutMs,
-        });
-        log(sessionId, 'Search request sent');
-      } catch (httpErr) {
+        await connection.invoke(config.signalr.invokeMethod, payload);
+        log(sessionId, 'Search invoked on hub');
+      } catch (invokeErr) {
         clearTimeout(timer);
         resolve({
           id: sessionId,
           status: 'error',
-          error: `HTTP ${httpErr.response?.status || ''}: ${httpErr.message}`,
+          error: `Invoke failed: ${invokeErr.message}`,
           providers: providerResults,
           elapsed: Date.now() - t0,
         });
@@ -346,7 +338,7 @@ async function main() {
   console.log('  HOTEL SEARCH LOAD TEST');
   console.log(banner);
   console.log(`  Hub URL ........ ${config.hubUrl}`);
-  console.log(`  Search API ..... ${config.searchEndpoint}`);
+  console.log(`  Hub Method ..... ${config.signalr.invokeMethod}`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
   console.log(`  Timeout ........ ${opts.timeout || config.searchTimeoutMs} ms`);
 
