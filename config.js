@@ -5,68 +5,40 @@ module.exports = {
   //  CONNECTION
   // =================================================================
   baseUrl: 'https://alkhameescore.techeffic.com',
+  searchHubUrl: 'https://alkhameescore.techeffic.com/hubs/mobilehotelsearch',
 
-  // SignalR hub — NO cacheKey in the URL (it's sent via RegisterConnection)
-  hubUrl: 'https://alkhameescore.techeffic.com/hubs/mobilehotelsearch',
-
-  // HTTP POST to trigger the search
-  searchUrl(cacheKey, key) {
-    return `${this.baseUrl}/api/Hotel/HotelResultDetails/${cacheKey}/${key}`;
+  pricesHubUrl(cacheKey) {
+    return `https://alkhameescore.techeffic.com/hubs/hotelsearch/prices?cacheKey=${cacheKey}`;
   },
 
   generateCacheKey() {
     return crypto.randomUUID();
   },
 
-  generateKey() {
-    return crypto.randomUUID();
-  },
+  // =================================================================
+  //  AUTHENTICATION
+  //  Put your tempToken here (get it from browser console/localStorage)
+  // =================================================================
+  tempToken: 'PUT_YOUR_TEMP_TOKEN_HERE',
 
   // =================================================================
-  //  SIGNALR METHOD NAMES
+  //  SIGNALR METHOD NAMES  (exact names from source code)
   // =================================================================
   signalr: {
-    // Client invokes to register for results
     registerMethod: 'RegisterConnection',
-
-    // Server pushes first page of hotel results
-    receiveFirstPage: 'ReceiveFirstPageHotelResult',
-
-    // Server pushes incremental count updates per provider
+    receiveFirstPage: 'ReceiveFirtPageHotelResult',   // typo is intentional — matches server
     countUpdated: 'CountUpdated',
-
-    // Server signals search is finished
     searchFinished: 'ReceiveHotelSearchFinished',
-
-    // Server sends status messages
     receiveMessage: 'ReceiveMessage',
+    paginationResults: 'ReceivePaginationResults',
+    filteredResult: 'ReceiveFilteredResult',
+    errorOccured: 'ErrorOccured',                      // typo is intentional — matches server
   },
 
   // =================================================================
   //  PROVIDERS
   // =================================================================
   providers: ['TBO', 'Webbeds', 'hotelbeds', 'ratehawk', 'magic', 'smile'],
-
-  // =================================================================
-  //  SEARCH PAYLOAD  (POST body to /api/Hotel/HotelResultDetails)
-  //  TODO: Replace with real values from a working Postman request
-  // =================================================================
-  searchPayload: {
-    checkIn: '2026-04-15T00:00:00.000Z',
-    checkOut: '2026-04-18T00:00:00.000Z',
-    code: '25270',
-    type: 2,
-    nationalityName: 'Egyptian',
-    nationality: 'EG',
-    passengers: '2',
-    city: 'Dubai',
-    country: 'AE',
-    rate: 'EGP',
-    env: 'test',
-    hotelCodes: [],
-    hotelProviders: [],
-    source: 'loadtest',
-  },
 
   // =================================================================
   //  TIMEOUTS
