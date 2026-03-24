@@ -1,5 +1,3 @@
-const crypto = require('crypto');
-
 module.exports = {
   // =================================================================
   //  CONNECTION
@@ -12,27 +10,50 @@ module.exports = {
   },
 
   generateCacheKey() {
-    return crypto.randomUUID();
+    return String(Date.now()) + String(Math.floor(Math.random() * 10000));
   },
 
   // =================================================================
   //  AUTHENTICATION
-  //  Put your tempToken here (get it from browser console/localStorage)
+  //  ← PUT YOUR tempToken HERE (get it from browser)
   // =================================================================
   tempToken: 'PUT_YOUR_TEMP_TOKEN_HERE',
 
   // =================================================================
-  //  SIGNALR METHOD NAMES  (exact names from source code)
+  //  SIGNALR HUB METHODS  (from documentation)
   // =================================================================
   signalr: {
-    registerMethod: 'RegisterConnection',
-    receiveFirstPage: 'ReceiveFirtPageHotelResult',   // typo is intentional — matches server
+    // Client invokes
+    registerConnection: 'RegisterConnection',
+    searchHotels: 'SearchHotels',
+    nextPage: 'NextPage',
+    filter: 'Filter',
+
+    // Server pushes (method names from source code — typos are intentional)
+    receiveFirstPage: 'ReceiveFirtPageHotelResult',
     countUpdated: 'CountUpdated',
     searchFinished: 'ReceiveHotelSearchFinished',
     receiveMessage: 'ReceiveMessage',
     paginationResults: 'ReceivePaginationResults',
     filteredResult: 'ReceiveFilteredResult',
-    errorOccured: 'ErrorOccured',                      // typo is intentional — matches server
+    errorOccured: 'ErrorOccured',
+  },
+
+  // =================================================================
+  //  SEARCH PARAMETERS
+  //  Destination codes:  "4" = Egypt,  "968" = Dubai
+  // =================================================================
+  searchPayload: {
+    CheckIn: '2026-08-05',
+    CheckOut: '2026-08-09',
+    Code: '968',
+    Type: 2,
+    GuestNationality: '2',
+    GuestNationalityName: 'EG',
+    HotelPassenger: [{ adults: 1 }],
+    City: 'DUBAI',
+    Country: 'UNITED ARAB EMIRATES',
+    HotelCodes: [],
   },
 
   // =================================================================

@@ -20,6 +20,9 @@ program
   .option('--ramp-duration <sec>', 'Ramp-up: total duration in seconds', parseInt)
   .option('--ramp-step <sec>', 'Ramp-up: seconds between steps', parseInt)
   .option('--timeout <ms>', 'Per-search timeout in ms', parseInt)
+  .option('--city <code>', 'Destination code (968=Dubai, 4=Egypt)', '968')
+  .option('--checkin <date>', 'Check-in date YYYY-MM-DD')
+  .option('--checkout <date>', 'Check-out date YYYY-MM-DD')
   .parse();
 
 const opts = program.opts();
@@ -27,6 +30,14 @@ const opts = program.opts();
 function resolveProviders() {
   if (opts.providers === 'all') return [...config.providers];
   return opts.providers.split(',').map(p => p.trim());
+}
+
+function buildSearchPayload() {
+  const payload = { ...config.searchPayload };
+  if (opts.city) payload.Code = opts.city;
+  if (opts.checkin) payload.CheckIn = opts.checkin;
+  if (opts.checkout) payload.CheckOut = opts.checkout;
+  return payload;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -52,17 +63,6 @@ class MetricsCollector {
 
   _min(arr) { return arr.length ? Math.min(...arr) : 0; }
   _max(arr) { return arr.length ? Math.max(...arr) : 0; }
-
-  _statLine(label, arr) {
-    if (!arr.length) return null;
-    return (
-      pad(label, 30) +
-      pad(this._avg(arr), 12) +
-      pad(this._min(arr), 12) +
-      pad(this._max(arr), 12) +
-      pad(this._percentile(arr, 95), 12)
-    );
-  }
 
   report() {
     const total = this.sessions.length;
@@ -91,14 +91,13 @@ class MetricsCollector {
     console.log(`\n${line}`);
     console.log('  TIMING BREAKDOWN');
     console.log(line);
-    console.log(
-      pad('Metric', 30) + pad('Avg ms', 12) + pad('Min', 12) + pad('Max', 12) + pad('P95', 12)
-    );
+    console.log(pad('Metric', 30) + pad('Avg ms', 12) + pad('Min', 12) + pad('Max', 12) + pad('P95', 12));
     console.log(line);
 
     const timings = [
       ['Hub connect', 'connectTime'],
       ['RegisterConnection', 'registerTime'],
+      ['SearchHotels invoke', 'searchInvokeTime'],
       ['PricesHub connect', 'pricesConnectTime'],
       ['First page results', 'firstPageTime'],
       ['Search finished', 'finishTime'],
@@ -106,8 +105,14 @@ class MetricsCollector {
 
     for (const [label, key] of timings) {
       const arr = this.sessions.map(s => s[key]).filter(Boolean);
-      const l = this._statLine(label, arr);
-      if (l) console.log(l);
+      if (!arr.length) continue;
+      console.log(
+        pad(label, 30) +
+        pad(this._avg(arr), 12) +
+        pad(this._min(arr), 12) +
+        pad(this._max(arr), 12) +
+        pad(this._percentile(arr, 95), 12)
+      );
     }
 
     console.log(line);
@@ -143,13 +148,15 @@ function pad(v, w) {
 
 // ──────────────────────────────────────────────────────────────
 //  SINGLE SEARCH SESSION
-//  Replicates exact browser flow from signal-r.service.ts:
+//
+//  Complete flow (from hub documentation):
 //    1. Connect searchHub with accessToken
-//    2. Invoke RegisterConnection(cacheKey)
-//    3. After register completes → start pricesHub
-//    4. Listen for results on searchHub
+//    2. RegisterConnection(cacheKey)
+//    3. SearchHotels(cacheKey, searchPayload)  ← triggers the search
+//    4. After register → start pricesHub
+//    5. Listen for results
 // ──────────────────────────────────────────────────────────────
-async function runSearch(sessionId, providers, metrics) {
+async function runSearch(sessionId, providers, metrics, searchPayload) {
   const t0 = Date.now();
   let searchHub = null;
   let pricesHub = null;
@@ -160,6 +167,7 @@ async function runSearch(sessionId, providers, metrics) {
     status: 'pending',
     connectTime: 0,
     registerTime: 0,
+    searchInvokeTime: 0,
     pricesConnectTime: 0,
     firstPageTime: 0,
     finishTime: 0,
@@ -186,7 +194,7 @@ async function runSearch(sessionId, providers, metrics) {
         resolve(session);
       }
 
-      // Step 1: Connect searchHub WITH accessToken (like the browser does)
+      // ── Step 1: Connect searchHub with accessToken ─────────
       searchHub = new signalR.HubConnectionBuilder()
         .withUrl(config.searchHubUrl, {
           transport: signalR.HttpTransportType.WebSockets,
@@ -195,7 +203,7 @@ async function runSearch(sessionId, providers, metrics) {
         .configureLogging(signalR.LogLevel.None)
         .build();
 
-      // Listen: first page (note: server has typo "Firt")
+      // Listen for results (method names match server exactly)
       searchHub.on(config.signalr.receiveFirstPage, (result) => {
         const ms = Date.now() - t0;
         session.firstPageTime = ms;
@@ -225,7 +233,8 @@ async function runSearch(sessionId, providers, metrics) {
       });
 
       searchHub.on(config.signalr.errorOccured, (err) => {
-        log(sessionId, `Error: ${err}`);
+        log(sessionId, `ServerError: ${err}`);
+        finish('error', `Server: ${err}`);
       });
 
       // Step 1: Start connection
@@ -233,21 +242,29 @@ async function runSearch(sessionId, providers, metrics) {
       session.connectTime = Date.now() - t0;
       log(sessionId, `Connected in ${session.connectTime} ms`);
 
-      // Step 2: RegisterConnection
+      // ── Step 2: RegisterConnection ─────────────────────────
       try {
-        await searchHub.invoke(config.signalr.registerMethod, cacheKey);
+        await searchHub.invoke(config.signalr.registerConnection, cacheKey);
         session.registerTime = Date.now() - t0;
-        log(sessionId, `Registered: ${cacheKey.slice(0, 8)}...`);
+        log(sessionId, `Registered: ${cacheKey}`);
       } catch (err) {
-        finish('error', `RegisterConnection failed: ${err.message}`);
+        finish('error', `RegisterConnection: ${err.message}`);
         return;
       }
 
-      // Step 3: AFTER register completes → start pricesHub (exact browser order)
+      // ── Step 3: SearchHotels ← THIS TRIGGERS THE SEARCH ───
+      try {
+        await searchHub.invoke(config.signalr.searchHotels, cacheKey, searchPayload);
+        session.searchInvokeTime = Date.now() - t0;
+        log(sessionId, `SearchHotels invoked (Code=${searchPayload.Code})`);
+      } catch (err) {
+        finish('error', `SearchHotels: ${err.message}`);
+        return;
+      }
+
+      // ── Step 4: Start pricesHub (after register) ───────────
       pricesHub = new signalR.HubConnectionBuilder()
-        .withUrl(config.pricesHubUrl(cacheKey), {
-          skipNegotiation: false,
-        })
+        .withUrl(config.pricesHubUrl(cacheKey))
         .configureLogging(signalR.LogLevel.None)
         .build();
 
@@ -256,9 +273,8 @@ async function runSearch(sessionId, providers, metrics) {
       try {
         await pricesHub.start();
         session.pricesConnectTime = Date.now() - t0;
-        log(sessionId, `PricesHub started in ${session.pricesConnectTime} ms`);
       } catch (err) {
-        log(sessionId, `PricesHub failed: ${err.message} (continuing)`);
+        log(sessionId, `PricesHub: ${err.message} (continuing)`);
       }
     });
 
@@ -285,19 +301,19 @@ function log(sessionId, msg) {
 // ──────────────────────────────────────────────────────────────
 //  LOAD-TEST MODES
 // ──────────────────────────────────────────────────────────────
-async function concurrentMode(providers, metrics) {
+async function concurrentMode(providers, metrics, searchPayload) {
   const users = opts.users || config.defaults.users;
   console.log(`\n  Mode ........... Concurrent`);
   console.log(`  Users .......... ${users}\n`);
 
   const promises = [];
   for (let i = 1; i <= users; i++) {
-    promises.push(runSearch(i, providers, metrics));
+    promises.push(runSearch(i, providers, metrics, searchPayload));
   }
   return Promise.all(promises);
 }
 
-async function rampUpMode(providers, metrics) {
+async function rampUpMode(providers, metrics, searchPayload) {
   const start = opts.rampStart ?? config.defaults.rampStart;
   const end = opts.rampEnd ?? config.defaults.rampEnd;
   const duration = opts.rampDuration ?? config.defaults.rampDurationSec;
@@ -319,7 +335,7 @@ async function rampUpMode(providers, metrics) {
     const batch = [];
     for (let i = 0; i < users; i++) {
       sessionId++;
-      batch.push(runSearch(sessionId, providers, metrics));
+      batch.push(runSearch(sessionId, providers, metrics, searchPayload));
     }
     await Promise.all(batch);
 
@@ -339,29 +355,32 @@ function sleep(ms) {
 // ──────────────────────────────────────────────────────────────
 async function main() {
   if (config.tempToken === 'PUT_YOUR_TEMP_TOKEN_HERE') {
-    console.error('\n  ERROR: You must set tempToken in config.js first!');
-    console.error('  Get it from browser localStorage/sessionStorage or DevTools console.\n');
+    console.error('\n  ERROR: Set tempToken in config.js first!');
+    console.error('  Get it from browser: authService.currentUser().tempToken\n');
     process.exit(1);
   }
 
   const providers = resolveProviders();
+  const searchPayload = buildSearchPayload();
   const isRamp = opts.rampEnd != null;
 
   const banner = '='.repeat(78);
   console.log(`\n${banner}`);
   console.log('  HOTEL SEARCH LOAD TEST');
   console.log(banner);
-  console.log(`  SearchHub ...... ${config.searchHubUrl}`);
+  console.log(`  Hub ............ ${config.searchHubUrl}`);
   console.log(`  Token .......... ${config.tempToken.slice(0, 20)}...`);
+  console.log(`  Destination .... ${searchPayload.City} (Code: ${searchPayload.Code})`);
+  console.log(`  Dates .......... ${searchPayload.CheckIn} -> ${searchPayload.CheckOut}`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
   console.log(`  Timeout ........ ${opts.timeout || config.searchTimeoutMs} ms`);
 
   const metrics = new MetricsCollector();
 
   if (isRamp) {
-    await rampUpMode(providers, metrics);
+    await rampUpMode(providers, metrics, searchPayload);
   } else {
-    await concurrentMode(providers, metrics);
+    await concurrentMode(providers, metrics, searchPayload);
   }
 
   metrics.report();
