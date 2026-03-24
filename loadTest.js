@@ -203,6 +203,10 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
         .configureLogging(signalR.LogLevel.None)
         .build();
 
+      searchHub.onclose((err) => {
+        if (err) log(sessionId, `Hub closed: ${err}`);
+      });
+
       // Listen for results (method names match server exactly)
       searchHub.on(config.signalr.receiveFirstPage, (result) => {
         const ms = Date.now() - t0;
@@ -234,7 +238,6 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
 
       searchHub.on(config.signalr.errorOccured, (err) => {
         log(sessionId, `ServerError: ${err}`);
-        finish('error', `Server: ${err}`);
       });
 
       // Step 1: Start connection
@@ -354,11 +357,7 @@ function sleep(ms) {
 //  MAIN
 // ──────────────────────────────────────────────────────────────
 async function main() {
-  if (config.tempToken === 'PUT_YOUR_TEMP_TOKEN_HERE') {
-    console.error('\n  ERROR: Set tempToken in config.js first!');
-    console.error('  Get it from browser: authService.currentUser().tempToken\n');
-    process.exit(1);
-  }
+  // tempToken is optional — auth may be handled by Teleport proxy
 
   const providers = resolveProviders();
   const searchPayload = buildSearchPayload();

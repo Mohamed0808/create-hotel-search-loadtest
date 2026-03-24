@@ -17,7 +17,7 @@ module.exports = {
   //  AUTHENTICATION
   //  ← PUT YOUR tempToken HERE (get it from browser)
   // =================================================================
-  tempToken: 'PUT_YOUR_TEMP_TOKEN_HERE',
+  tempToken: '',
 
   // =================================================================
   //  SIGNALR HUB METHODS  (from documentation)
