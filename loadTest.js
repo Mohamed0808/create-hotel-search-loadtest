@@ -217,7 +217,7 @@ function attachListeners(hub, sessionId, session, t0, finish) {
       session.pageCount = data?.pageCount ?? session.pageCount;
     } catch (_) {}
     log(sessionId, `FINISHED: ${session.totalHotels} hotels, ${session.pageCount} pages in ${ms} ms`);
-    finish('complete');
+    session.searchDone = true;
   });
 
   hub.on(config.signalr.receiveMessage, (msg) => {
@@ -241,6 +241,7 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
     finishTime: 0,
     totalHotels: 0,
     pageCount: 0,
+    searchDone: false,
     elapsed: 0,
     error: null,
   };
@@ -283,18 +284,14 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
       session.searchInvokeTime = Date.now() - t0;
       log(sessionId, `SearchHotels sent (Code=${searchPayload.Code})`);
 
-      // ── Phase 2: Wait for results or ErrorOccured ──────────
-      // If ErrorOccured fires, reconnect to fetch cached results
+      // ── Phase 2: Wait for ErrorOccured → reconnect if needed ─
       await new Promise(r => setTimeout(r, 5000));
 
       if (errorFired && session.status === 'pending') {
         log(sessionId, `ErrorOccured detected, reconnecting...`);
         try { await searchHub.stop(); } catch (_) {}
-
-        // Wait for server to finish caching results
         await new Promise(r => setTimeout(r, 3000));
 
-        // Reconnect with same cacheKey
         searchHub = createHub(`${config.searchHubUrl}?cacheKey=${cacheKey}`);
         attachListeners(searchHub, sessionId, session, t0, finish);
 
@@ -302,28 +299,33 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
         await searchHub.send(config.signalr.registerConnection, cacheKey);
         session.reconnectTime = Date.now() - t0;
         log(sessionId, `Reconnected and re-registered`);
+      }
 
-        // Wait for first page + finished signal
-        await new Promise(r => setTimeout(r, 3000));
+      // ── Phase 3: Wait for search to finish ─────────────────
+      while (!session.searchDone && (Date.now() - t0) < timeoutMs) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
 
-        // ── Phase 3: Fetch additional pages if requested ─────
-        const pagesToFetch = opts.pages || 0;
-        if (pagesToFetch > 0 && session.pageCount > 1) {
-          const maxPage = Math.min(pagesToFetch + 1, session.pageCount);
-          for (let page = 2; page <= maxPage; page++) {
-            try {
-              await searchHub.send(config.signalr.nextPage, cacheKey, page, searchPayload.CheckIn);
-              log(sessionId, `NextPage(${page}) sent`);
-              await new Promise(r => setTimeout(r, 2000));
-            } catch (e) {
-              log(sessionId, `NextPage(${page}) failed: ${e.message}`);
-            }
+      // ── Phase 4: Fetch additional pages if requested ───────
+      const pagesToFetch = opts.pages || 0;
+      if (pagesToFetch > 0 && session.pageCount > 1 && session.status !== 'timeout') {
+        const maxPage = Math.min(pagesToFetch + 1, session.pageCount);
+        log(sessionId, `Fetching pages 2-${maxPage} of ${session.pageCount}...`);
+        for (let page = 2; page <= maxPage; page++) {
+          try {
+            await searchHub.send(config.signalr.nextPage, cacheKey, page, searchPayload.CheckIn);
+            await new Promise(r => setTimeout(r, 1500));
+          } catch (e) {
+            log(sessionId, `NextPage(${page}) failed: ${e.message}`);
+            break;
           }
         }
+        await new Promise(r => setTimeout(r, 2000));
+        log(sessionId, `Pagination done: ${session.totalHotels} total hotels`);
+      }
 
-        if (session.status === 'pending') {
-          finish('complete');
-        }
+      if (session.status === 'pending') {
+        finish('complete');
       }
     });
 
