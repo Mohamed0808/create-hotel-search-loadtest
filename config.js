@@ -13,7 +13,7 @@ module.exports = {
   },
 
   generateCacheKey() {
-    return String(Date.now()) + String(Math.floor(Math.random() * 10000));
+    return String(Date.now());
   },
 
   // =================================================================
@@ -35,9 +35,9 @@ module.exports = {
   //
   //  Without auth, SearchHotels returns ErrorOccured: []
   // =================================================================
-  tempToken: '',           // e.g. 'eyJhbGciOiJIUzI1NiIs...'
-  apiKey: '',              // e.g. 'sk-abc123...'
-  apiKeyHeader: '',        // e.g. 'X-Api-Key' or 'Authorization'
+  tempToken: '',
+  apiKey: '',
+  apiKeyHeader: '',
   authCookie: '',          // e.g. 'session=abc123; token=xyz'
 
   // =================================================================
@@ -75,6 +75,7 @@ module.exports = {
     City: 'DUBAI',
     Country: 'UNITED ARAB EMIRATES',
     HotelCodes: [],
+    key: '5b425eec-4f13-2577-5b34-a7d560af7797',
   },
 
   // =================================================================

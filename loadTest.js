@@ -98,7 +98,7 @@ class MetricsCollector {
       ['Hub connect', 'connectTime'],
       ['RegisterConnection', 'registerTime'],
       ['SearchHotels invoke', 'searchInvokeTime'],
-      ['PricesHub connect', 'pricesConnectTime'],
+      ['Reconnect', 'reconnectTime'],
       ['First page results', 'firstPageTime'],
       ['Search finished', 'finishTime'],
     ];
@@ -153,13 +153,69 @@ function pad(v, w) {
 //    1. Connect searchHub with accessToken
 //    2. RegisterConnection(cacheKey)
 //    3. SearchHotels(cacheKey, searchPayload)  ← triggers the search
-//    4. After register → start pricesHub
+//    4. Wait for ErrorOccured → reconnect to get cached results
 //    5. Listen for results
 // ──────────────────────────────────────────────────────────────
+
+function buildHubOptions() {
+  const opts = {
+    skipNegotiation: true,
+    transport: signalR.HttpTransportType.WebSockets,
+  };
+  if (config.tempToken) {
+    opts.accessTokenFactory = () => config.tempToken;
+  }
+  if (config.apiKey && config.apiKeyHeader) {
+    opts.headers = opts.headers || {};
+    opts.headers[config.apiKeyHeader] = config.apiKey;
+  }
+  if (config.authCookie) {
+    opts.headers = opts.headers || {};
+    opts.headers['Cookie'] = config.authCookie;
+  }
+  return opts;
+}
+
+function createHub(url) {
+  return new signalR.HubConnectionBuilder()
+    .withUrl(url, buildHubOptions())
+    .configureLogging(signalR.LogLevel.None)
+    .build();
+}
+
+function attachListeners(hub, sessionId, session, t0, finish) {
+  hub.on(config.signalr.receiveFirstPage, (result) => {
+    const ms = Date.now() - t0;
+    session.firstPageTime = ms;
+    const data = typeof result === 'string' ? JSON.parse(result) : result;
+    session.totalHotels = data?.hotelResults?.length ?? 0;
+    log(sessionId, `First page: ${session.totalHotels} hotels in ${ms} ms`);
+  });
+
+  hub.on(config.signalr.countUpdated, (result) => {
+    const data = typeof result === 'string' ? JSON.parse(result) : result;
+    session.pageCount = data?.pageCount ?? session.pageCount;
+  });
+
+  hub.on(config.signalr.searchFinished, (summary) => {
+    const ms = Date.now() - t0;
+    session.finishTime = ms;
+    try {
+      const data = typeof summary === 'string' ? JSON.parse(summary) : summary;
+      session.pageCount = data?.pageCount ?? session.pageCount;
+    } catch (_) {}
+    log(sessionId, `FINISHED: ${session.pageCount} pages in ${ms} ms`);
+    finish('complete');
+  });
+
+  hub.on(config.signalr.receiveMessage, (msg) => {
+    log(sessionId, `Server: ${msg}`);
+  });
+}
+
 async function runSearch(sessionId, providers, metrics, searchPayload) {
   const t0 = Date.now();
   let searchHub = null;
-  let pricesHub = null;
   const cacheKey = config.generateCacheKey();
 
   const session = {
@@ -168,7 +224,7 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
     connectTime: 0,
     registerTime: 0,
     searchInvokeTime: 0,
-    pricesConnectTime: 0,
+    reconnectTime: 0,
     firstPageTime: 0,
     finishTime: 0,
     totalHotels: 0,
@@ -194,113 +250,46 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
         resolve(session);
       }
 
-      // ── Step 1: Connect searchHub ──────────────────────────
-      const hubOptions = {
-        skipNegotiation: true,
-        transport: signalR.HttpTransportType.WebSockets,
-      };
+      // ── Phase 1: Connect, Register, Search ─────────────────
+      searchHub = createHub(`${config.searchHubUrl}?cacheKey=${cacheKey}`);
 
-      // AUTH OPTION 1: Bearer token
-      if (config.tempToken) {
-        hubOptions.accessTokenFactory = () => config.tempToken;
-      }
+      let errorFired = false;
+      searchHub.on(config.signalr.errorOccured, () => { errorFired = true; });
+      attachListeners(searchHub, sessionId, session, t0, finish);
 
-      // AUTH OPTION 2: API Key header
-      if (config.apiKey && config.apiKeyHeader) {
-        hubOptions.headers = hubOptions.headers || {};
-        hubOptions.headers[config.apiKeyHeader] = config.apiKey;
-      }
-
-      // AUTH OPTION 3: Cookie
-      if (config.authCookie) {
-        hubOptions.headers = hubOptions.headers || {};
-        hubOptions.headers['Cookie'] = config.authCookie;
-      }
-
-      searchHub = new signalR.HubConnectionBuilder()
-        .withUrl(`${config.searchHubUrl}?cacheKey=${cacheKey}`, hubOptions)
-        .configureLogging(signalR.LogLevel.None)
-        .build();
-
-      searchHub.onclose((err) => {
-        if (err) log(sessionId, `Hub closed: ${err}`);
-      });
-
-      // Listen for results (method names match server exactly)
-      searchHub.on(config.signalr.receiveFirstPage, (result) => {
-        const ms = Date.now() - t0;
-        session.firstPageTime = ms;
-        const data = typeof result === 'string' ? JSON.parse(result) : result;
-        session.totalHotels = data?.hotelResults?.length ?? 0;
-        log(sessionId, `First page: ${session.totalHotels} hotels in ${ms} ms`);
-      });
-
-      searchHub.on(config.signalr.countUpdated, (result) => {
-        const data = typeof result === 'string' ? JSON.parse(result) : result;
-        session.pageCount = data?.pageCount ?? session.pageCount;
-      });
-
-      searchHub.on(config.signalr.searchFinished, (summary) => {
-        const ms = Date.now() - t0;
-        session.finishTime = ms;
-        try {
-          const data = typeof summary === 'string' ? JSON.parse(summary) : summary;
-          session.pageCount = data?.pageCount ?? session.pageCount;
-        } catch (_) {}
-        log(sessionId, `FINISHED: ${session.pageCount} pages in ${ms} ms`);
-        finish('complete');
-      });
-
-      searchHub.on(config.signalr.receiveMessage, (msg) => {
-        log(sessionId, `Server: ${msg}`);
-      });
-
-      searchHub.on(config.signalr.errorOccured, (err) => {
-        log(sessionId, `ServerError: ${err}`);
-      });
-
-      // Step 1: Start connection
       await searchHub.start();
       session.connectTime = Date.now() - t0;
       log(sessionId, `Connected in ${session.connectTime} ms`);
 
-      // ── Step 2: RegisterConnection (send, not invoke — no invocationId) ──
-      try {
+      await searchHub.send(config.signalr.registerConnection, cacheKey);
+      session.registerTime = Date.now() - t0;
+      log(sessionId, `Registered: ${cacheKey}`);
+
+      await new Promise(r => setTimeout(r, 300));
+
+      await searchHub.send(config.signalr.searchHotels, cacheKey, searchPayload);
+      session.searchInvokeTime = Date.now() - t0;
+      log(sessionId, `SearchHotels sent (Code=${searchPayload.Code})`);
+
+      // ── Phase 2: Wait for results or ErrorOccured ──────────
+      // If ErrorOccured fires, reconnect to fetch cached results
+      await new Promise(r => setTimeout(r, 5000));
+
+      if (errorFired && session.status === 'pending') {
+        log(sessionId, `ErrorOccured detected, reconnecting...`);
+        try { await searchHub.stop(); } catch (_) {}
+
+        // Wait for server to finish caching results
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Reconnect with same cacheKey
+        searchHub = createHub(`${config.searchHubUrl}?cacheKey=${cacheKey}`);
+        attachListeners(searchHub, sessionId, session, t0, finish);
+
+        await searchHub.start();
         await searchHub.send(config.signalr.registerConnection, cacheKey);
-        session.registerTime = Date.now() - t0;
-        log(sessionId, `Registered: ${cacheKey}`);
-      } catch (err) {
-        finish('error', `RegisterConnection: ${err.message}`);
-        return;
-      }
-
-      // Small delay to let registration complete before searching
-      await new Promise(r => setTimeout(r, 500));
-
-      // ── Step 3: SearchHotels ← THIS TRIGGERS THE SEARCH ───
-      // Use send() not invoke() — matches Postman (no invocationId)
-      try {
-        await searchHub.send(config.signalr.searchHotels, cacheKey, searchPayload);
-        session.searchInvokeTime = Date.now() - t0;
-        log(sessionId, `SearchHotels sent (Code=${searchPayload.Code})`);
-      } catch (err) {
-        finish('error', `SearchHotels: ${err.message}`);
-        return;
-      }
-
-      // ── Step 4: Start pricesHub (after register) ───────────
-      pricesHub = new signalR.HubConnectionBuilder()
-        .withUrl(config.pricesHubUrl(cacheKey))
-        .configureLogging(signalR.LogLevel.None)
-        .build();
-
-      pricesHub.on('Send', () => {});
-
-      try {
-        await pricesHub.start();
-        session.pricesConnectTime = Date.now() - t0;
-      } catch (err) {
-        log(sessionId, `PricesHub: ${err.message} (continuing)`);
+        session.reconnectTime = Date.now() - t0;
+        log(sessionId, `Reconnected and re-registered`);
       }
     });
 
@@ -315,7 +304,6 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
     return session;
   } finally {
     if (searchHub) { try { await searchHub.stop(); } catch (_) {} }
-    if (pricesHub) { try { await pricesHub.stop(); } catch (_) {} }
   }
 }
 
