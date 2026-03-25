@@ -20,7 +20,7 @@ program
   .option('--ramp-duration <sec>', 'Ramp-up: total duration in seconds', parseInt)
   .option('--ramp-step <sec>', 'Ramp-up: seconds between steps', parseInt)
   .option('--timeout <ms>', 'Per-search timeout in ms', parseInt)
-  .option('--city <code>', 'Destination code (968=Dubai, 4=Egypt)', '968')
+  .option('--city <code>', 'Destination code (25270=Dubai, 4=Egypt)')
   .option('--checkin <date>', 'Check-in date YYYY-MM-DD')
   .option('--checkout <date>', 'Check-out date YYYY-MM-DD')
   .option('--pages <n>', 'Number of pages to fetch (0=first page only)', parseInt, 0)

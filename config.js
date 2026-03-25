@@ -67,15 +67,14 @@ module.exports = {
   searchPayload: {
     CheckIn: '2026-08-05',
     CheckOut: '2026-08-09',
-    Code: '968',
+    Code: '25270',
     Type: 2,
-    GuestNationality: '2',
+    GuestNationality: '70',
     GuestNationalityName: 'EG',
     HotelPassenger: [{ adults: 1 }],
-    City: 'DUBAI',
+    City: 'Dubai',
     Country: 'UNITED ARAB EMIRATES',
     HotelCodes: [],
-    key: '5b425eec-4f13-2577-5b34-a7d560af7797',
   },
 
   // =================================================================
