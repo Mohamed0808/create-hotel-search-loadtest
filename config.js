@@ -62,7 +62,7 @@ module.exports = {
 
   // =================================================================
   //  SEARCH PARAMETERS
-  //  Destination codes:  "4" = Egypt,  "25270" = Dubai
+  //  Destination codes:  "25270" = Dubai
   // =================================================================
   searchPayload: {
     CheckIn: '2026-08-05',
