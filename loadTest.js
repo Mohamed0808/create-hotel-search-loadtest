@@ -23,6 +23,7 @@ program
   .option('--city <code>', 'Destination code (968=Dubai, 4=Egypt)', '968')
   .option('--checkin <date>', 'Check-in date YYYY-MM-DD')
   .option('--checkout <date>', 'Check-out date YYYY-MM-DD')
+  .option('--pages <n>', 'Number of pages to fetch (0=first page only)', parseInt, 0)
   .parse();
 
 const opts = program.opts();
@@ -188,8 +189,16 @@ function attachListeners(hub, sessionId, session, t0, finish) {
     const ms = Date.now() - t0;
     session.firstPageTime = ms;
     const data = typeof result === 'string' ? JSON.parse(result) : result;
-    session.totalHotels = data?.hotelResults?.length ?? 0;
-    log(sessionId, `First page: ${session.totalHotels} hotels in ${ms} ms`);
+    const hotels = data?.hotelResults?.length ?? 0;
+    session.totalHotels += hotels;
+    log(sessionId, `First page: ${hotels} hotels in ${ms} ms`);
+  });
+
+  hub.on(config.signalr.paginationResults, (result) => {
+    const data = typeof result === 'string' ? JSON.parse(result) : result;
+    const hotels = data?.hotelResults?.length ?? 0;
+    session.totalHotels += hotels;
+    log(sessionId, `Page result: +${hotels} hotels (total: ${session.totalHotels})`);
   });
 
   hub.on(config.signalr.countUpdated, (result) => {
@@ -204,7 +213,7 @@ function attachListeners(hub, sessionId, session, t0, finish) {
       const data = typeof summary === 'string' ? JSON.parse(summary) : summary;
       session.pageCount = data?.pageCount ?? session.pageCount;
     } catch (_) {}
-    log(sessionId, `FINISHED: ${session.pageCount} pages in ${ms} ms`);
+    log(sessionId, `FINISHED: ${session.totalHotels} hotels, ${session.pageCount} pages in ${ms} ms`);
     finish('complete');
   });
 
@@ -290,6 +299,28 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
         await searchHub.send(config.signalr.registerConnection, cacheKey);
         session.reconnectTime = Date.now() - t0;
         log(sessionId, `Reconnected and re-registered`);
+
+        // Wait for first page + finished signal
+        await new Promise(r => setTimeout(r, 3000));
+
+        // ── Phase 3: Fetch additional pages if requested ─────
+        const pagesToFetch = opts.pages || 0;
+        if (pagesToFetch > 0 && session.pageCount > 1) {
+          const maxPage = Math.min(pagesToFetch + 1, session.pageCount);
+          for (let page = 2; page <= maxPage; page++) {
+            try {
+              await searchHub.send(config.signalr.nextPage, cacheKey, page, searchPayload.CheckIn);
+              log(sessionId, `NextPage(${page}) sent`);
+              await new Promise(r => setTimeout(r, 2000));
+            } catch (e) {
+              log(sessionId, `NextPage(${page}) failed: ${e.message}`);
+            }
+          }
+        }
+
+        if (session.status === 'pending') {
+          finish('complete');
+        }
       }
     });
 
