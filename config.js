@@ -1,12 +1,20 @@
 module.exports = {
   // =================================================================
-  //  CONNECTION
+  //  CONNECTION  —  switch between local and remote server
   // =================================================================
-  baseUrl: 'https://alkhameescore.techeffic.com',
-  searchHubUrl: 'https://alkhameescore.techeffic.com/hubs/mobilehotelsearch',
+
+  // LOCAL (no auth needed — works immediately)
+  baseUrl: 'http://localhost:7101',
+
+  // REMOTE (needs Teleport auth — uncomment when auth is available)
+  // baseUrl: 'https://alkhameescore.techeffic.com',
+
+  get searchHubUrl() {
+    return `${this.baseUrl}/hubs/mobilehotelsearch`;
+  },
 
   pricesHubUrl(cacheKey) {
-    return `https://alkhameescore.techeffic.com/hubs/hotelsearch/prices?cacheKey=${cacheKey}`;
+    return `${this.baseUrl}/hubs/hotelsearch/prices?cacheKey=${cacheKey}`;
   },
 
   generateCacheKey() {

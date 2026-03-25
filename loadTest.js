@@ -196,9 +196,9 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
 
       // ── Step 1: Connect searchHub with accessToken ─────────
       searchHub = new signalR.HubConnectionBuilder()
-        .withUrl(config.searchHubUrl, {
+        .withUrl(`${config.searchHubUrl}?cacheKey=${cacheKey}`, {
+          skipNegotiation: true,
           transport: signalR.HttpTransportType.WebSockets,
-          accessTokenFactory: () => config.tempToken,
         })
         .configureLogging(signalR.LogLevel.None)
         .build();
@@ -245,9 +245,9 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
       session.connectTime = Date.now() - t0;
       log(sessionId, `Connected in ${session.connectTime} ms`);
 
-      // ── Step 2: RegisterConnection ─────────────────────────
+      // ── Step 2: RegisterConnection (send, not invoke — no invocationId) ──
       try {
-        await searchHub.invoke(config.signalr.registerConnection, cacheKey);
+        await searchHub.send(config.signalr.registerConnection, cacheKey);
         session.registerTime = Date.now() - t0;
         log(sessionId, `Registered: ${cacheKey}`);
       } catch (err) {
@@ -255,11 +255,15 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
         return;
       }
 
+      // Small delay to let registration complete before searching
+      await new Promise(r => setTimeout(r, 500));
+
       // ── Step 3: SearchHotels ← THIS TRIGGERS THE SEARCH ───
+      // Use send() not invoke() — matches Postman (no invocationId)
       try {
-        await searchHub.invoke(config.signalr.searchHotels, cacheKey, searchPayload);
+        await searchHub.send(config.signalr.searchHotels, cacheKey, searchPayload);
         session.searchInvokeTime = Date.now() - t0;
-        log(sessionId, `SearchHotels invoked (Code=${searchPayload.Code})`);
+        log(sessionId, `SearchHotels sent (Code=${searchPayload.Code})`);
       } catch (err) {
         finish('error', `SearchHotels: ${err.message}`);
         return;
