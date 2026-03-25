@@ -33,11 +33,14 @@ function resolveProviders() {
   return opts.providers.split(',').map(p => p.trim());
 }
 
-function buildSearchPayload() {
+function buildSearchPayload(providers) {
   const payload = { ...config.searchPayload };
   if (opts.city) payload.Code = opts.city;
   if (opts.checkin) payload.CheckIn = opts.checkin;
   if (opts.checkout) payload.CheckOut = opts.checkout;
+  if (providers && !providers.includes('all')) {
+    payload.Providers = providers;
+  }
   return payload;
 }
 
@@ -407,7 +410,7 @@ async function main() {
   }
 
   const providers = resolveProviders();
-  const searchPayload = buildSearchPayload();
+  const searchPayload = buildSearchPayload(providers);
   const isRamp = opts.rampEnd != null;
 
   const banner = '='.repeat(78);
@@ -420,6 +423,8 @@ async function main() {
   console.log(`  Destination .... ${searchPayload.City} (Code: ${searchPayload.Code})`);
   console.log(`  Dates .......... ${searchPayload.CheckIn} -> ${searchPayload.CheckOut}`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
+  console.log(`  Pages .......... ${opts.pages ? opts.pages : 'first page only'}`);
+  console.log(`  Users .......... ${opts.users || config.defaults.users}`);
   console.log(`  Timeout ........ ${opts.timeout || config.searchTimeoutMs} ms`);
 
   const metrics = new MetricsCollector();
