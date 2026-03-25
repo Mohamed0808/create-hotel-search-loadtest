@@ -1,13 +1,8 @@
 module.exports = {
   // =================================================================
-  //  CONNECTION  —  switch between local and remote server
+  //  CONNECTION
   // =================================================================
-
-  // LOCAL (no auth needed — works immediately)
-  baseUrl: 'http://localhost:7101',
-
-  // REMOTE (needs Teleport auth — uncomment when auth is available)
-  // baseUrl: 'https://alkhameescore.techeffic.com',
+  baseUrl: 'https://alkhameescore.techeffic.com',
 
   get searchHubUrl() {
     return `${this.baseUrl}/hubs/mobilehotelsearch`;
@@ -23,9 +18,27 @@ module.exports = {
 
   // =================================================================
   //  AUTHENTICATION
-  //  ← PUT YOUR tempToken HERE (get it from browser)
+  //
+  //  *** ASK YOUR DEVELOPER TO PROVIDE ONE OF THESE: ***
+  //
+  //  Option 1: Bearer token / JWT
+  //    → Set tempToken below
+  //    → The script sends it via accessTokenFactory on the hub
+  //
+  //  Option 2: API Key header
+  //    → Set apiKey and apiKeyHeader below
+  //    → The script sends it as a custom header on negotiate + WS
+  //
+  //  Option 3: Cookie-based auth
+  //    → Set authCookie below (full cookie string)
+  //    → The script sends it as Cookie header
+  //
+  //  Without auth, SearchHotels returns ErrorOccured: []
   // =================================================================
-  tempToken: '',
+  tempToken: '',           // e.g. 'eyJhbGciOiJIUzI1NiIs...'
+  apiKey: '',              // e.g. 'sk-abc123...'
+  apiKeyHeader: '',        // e.g. 'X-Api-Key' or 'Authorization'
+  authCookie: '',          // e.g. 'session=abc123; token=xyz'
 
   // =================================================================
   //  SIGNALR HUB METHODS  (from documentation)
@@ -37,7 +50,7 @@ module.exports = {
     nextPage: 'NextPage',
     filter: 'Filter',
 
-    // Server pushes (method names from source code — typos are intentional)
+    // Server pushes (typos are intentional — match server exactly)
     receiveFirstPage: 'ReceiveFirtPageHotelResult',
     countUpdated: 'CountUpdated',
     searchFinished: 'ReceiveHotelSearchFinished',

@@ -194,12 +194,31 @@ async function runSearch(sessionId, providers, metrics, searchPayload) {
         resolve(session);
       }
 
-      // ── Step 1: Connect searchHub with accessToken ─────────
+      // ── Step 1: Connect searchHub ──────────────────────────
+      const hubOptions = {
+        skipNegotiation: true,
+        transport: signalR.HttpTransportType.WebSockets,
+      };
+
+      // AUTH OPTION 1: Bearer token
+      if (config.tempToken) {
+        hubOptions.accessTokenFactory = () => config.tempToken;
+      }
+
+      // AUTH OPTION 2: API Key header
+      if (config.apiKey && config.apiKeyHeader) {
+        hubOptions.headers = hubOptions.headers || {};
+        hubOptions.headers[config.apiKeyHeader] = config.apiKey;
+      }
+
+      // AUTH OPTION 3: Cookie
+      if (config.authCookie) {
+        hubOptions.headers = hubOptions.headers || {};
+        hubOptions.headers['Cookie'] = config.authCookie;
+      }
+
       searchHub = new signalR.HubConnectionBuilder()
-        .withUrl(`${config.searchHubUrl}?cacheKey=${cacheKey}`, {
-          skipNegotiation: true,
-          transport: signalR.HttpTransportType.WebSockets,
-        })
+        .withUrl(`${config.searchHubUrl}?cacheKey=${cacheKey}`, hubOptions)
         .configureLogging(signalR.LogLevel.None)
         .build();
 
@@ -361,7 +380,12 @@ function sleep(ms) {
 //  MAIN
 // ──────────────────────────────────────────────────────────────
 async function main() {
-  // tempToken is optional — auth may be handled by Teleport proxy
+  const hasAuth = !!(config.tempToken || config.apiKey || config.authCookie);
+  if (!hasAuth) {
+    console.log('\n  WARNING: No authentication configured in config.js');
+    console.log('  SearchHotels may fail with ErrorOccured on remote servers.');
+    console.log('  Ask your developer which auth method to use (see config.js comments).\n');
+  }
 
   const providers = resolveProviders();
   const searchPayload = buildSearchPayload();
@@ -371,8 +395,9 @@ async function main() {
   console.log(`\n${banner}`);
   console.log('  HOTEL SEARCH LOAD TEST');
   console.log(banner);
+  const authType = config.tempToken ? 'Bearer Token' : config.apiKey ? `API Key (${config.apiKeyHeader})` : config.authCookie ? 'Cookie' : 'NONE';
   console.log(`  Hub ............ ${config.searchHubUrl}`);
-  console.log(`  Token .......... ${config.tempToken.slice(0, 20)}...`);
+  console.log(`  Auth ........... ${authType}`);
   console.log(`  Destination .... ${searchPayload.City} (Code: ${searchPayload.Code})`);
   console.log(`  Dates .......... ${searchPayload.CheckIn} -> ${searchPayload.CheckOut}`);
   console.log(`  Providers ...... ${providers.join(', ')}`);
